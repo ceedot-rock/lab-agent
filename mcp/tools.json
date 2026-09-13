@@ -1,0 +1,8 @@
+{
+  "name": "slidphilabs",
+  "tools": [
+    {"name": "cuni_check", "description": "Exactness or refuse"},
+    {"name": "bank_paste", "description": "Paste N get X or refuse"},
+    {"name": "pccx_encode", "description": "PCC1 DECODE_OK or no file"}
+  ]
+}

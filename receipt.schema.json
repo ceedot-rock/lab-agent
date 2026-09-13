@@ -1,0 +1,10 @@
+{
+  "required": ["verb", "ok", "source_hash", "pin"],
+  "properties": {
+    "verb": {"enum": ["check", "translate", "squeeze"]},
+    "ok": {"type": "boolean"},
+    "source_hash": {"type": "string"},
+    "pin": {"type": "string"},
+    "refuse": {"type": "string"}
+  }
+}

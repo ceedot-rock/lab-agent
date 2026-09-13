@@ -1,0 +1,8 @@
+{
+  "id": "bank-add",
+  "verb": "translate",
+  "from": "py",
+  "source_hash": "bd4067ac5fd8b550",
+  "stdout_gold": "5\n",
+  "to": ["py", "go", "js", "ts", "c", "cpp", "rs", "rb", "php", "pl"]
+}
