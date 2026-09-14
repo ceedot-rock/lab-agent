@@ -6,6 +6,8 @@ Updated 2026-09-14.
 
 check · translate · squeeze
 
+Pack is a lab verb (PP01 pipe). Not a public noun yet. Module: pack_verb.py. Repo: https://github.com/ceedot-rock/packed-pipe (private). Not Combined GC.
+
 ## Pins
 
 | verb | pin | live |
@@ -13,6 +15,7 @@ check · translate · squeeze
 | check | cuni v0.1.10 / Bank tag cuni-bank-0.1.0 | POST https://spl-lab-agent.fly.dev/v1/check |
 | translate | cuni-bank-0.1.0 | POST https://spl-lab-agent.fly.dev/v1/translate |
 | squeeze | pccx e72528b (0.3.0 tree) | POST https://spl-lab-agent.fly.dev/v1/squeeze |
+| pack | packed-pipe-0.1 | module on main; Fly route not shipped |
 
 Health: https://spl-lab-agent.fly.dev/healthz
 Catalog: https://spl-lab-agent.fly.dev/.well-known/ai-products.json
