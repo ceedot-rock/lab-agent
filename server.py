@@ -24,8 +24,14 @@ PIN_CHECK = os.environ.get("PIN_CHECK", "v0.1.10")
 PIN_BANK = os.environ.get("PIN_BANK", "cuni-bank-0.1.0")
 PIN_PCCX = os.environ.get("PIN_PCCX", "e72528b")
 PAY_URL = os.environ.get("LAB_PAY_URL", "https://www.slidphilabs.com/api/agent")
+X402_URL = os.environ.get("LAB_X402_URL", "https://www.slidphilabs.com/api/x402-products")
 REQUIRE_PAY = os.environ.get("LAB_REQUIRE_PAY", "0").strip() in ("1", "true", "yes")
 DEPOSIT_DIR = Path(os.environ.get("LAB_DEPOSIT_DIR", "/tmp/lab-deposits"))
+VERB_SKU = {
+    "check": "lab-check",
+    "translate": "lab-translate",
+    "squeeze": "lab-squeeze",
+}
 
 
 def fnv1a64(data: bytes) -> str:
@@ -54,14 +60,53 @@ def receipt(**kw) -> dict:
     return out
 
 
-def paid(handler: BaseHTTPRequestHandler) -> bool:
-    if not REQUIRE_PAY:
-        return True
-    sig = handler.headers.get("Payment-Signature") or handler.headers.get("X-PAYMENT") or ""
-    return bool(sig.strip())
+import urllib.error
+import urllib.request
+
+
+def payment_header(handler: BaseHTTPRequestHandler) -> str:
+    return (
+        handler.headers.get("X-PAYMENT")
+        or handler.headers.get("Payment-Signature")
+        or handler.headers.get("PAYMENT-SIGNATURE")
+        or ""
+    ).strip()
+
+
+def x402_challenge(verb: str) -> dict:
+    sku = VERB_SKU[verb]
+    try:
+        with urllib.request.urlopen(f"{X402_URL}?sku={sku}", timeout=15) as r:
+            j = json.loads(r.read())
+        reqs = j.get("sample_402") or {}
+        return {"sku": sku, "accepts": reqs.get("accepts") or [], "x402Version": reqs.get("x402Version") or 1}
+    except Exception:
+        return {"sku": sku, "accepts": [], "x402Version": 1}
+
+
+def x402_verify(verb: str, header: str) -> tuple[int, dict]:
+    sku = VERB_SKU[verb]
+    req = urllib.request.Request(
+        X402_URL,
+        data=json.dumps({"sku": sku, "note": f"lab-agent {verb}"}).encode(),
+        headers={"Content-Type": "application/json", "X-PAYMENT": header},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read())
+        except Exception:
+            body = {"error": str(e)}
+        return e.code, body
+    except Exception as e:
+        return 503, {"ok": False, "error": str(e)}
 
 
 def paywall(verb: str, pin: str) -> dict:
+    ch = x402_challenge(verb)
     return receipt(
         verb=verb,
         ok=False,
@@ -69,6 +114,9 @@ def paywall(verb: str, pin: str) -> dict:
         pin=pin,
         refuse="payment required",
         pay=PAY_URL,
+        sku=ch["sku"],
+        x402Version=ch["x402Version"],
+        accepts=ch["accepts"] or None,
         retry=False,
     )
 
@@ -238,7 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         sys_stderr = __import__("sys").stderr
         sys_stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
-    def _send(self, code: int, body: dict | bytes, ctype: str = "application/json") -> None:
+    def _send(self, code: int, body: dict | bytes, ctype: str = "application/json", extra: dict | None = None) -> None:
         if isinstance(body, dict):
             payload = json.dumps(body).encode("utf-8")
         else:
@@ -247,6 +295,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        if extra:
+            for k, v in extra.items():
+                if v is not None:
+                    self.send_header(k, str(v))
         self.end_headers()
         self.wfile.write(payload)
 
@@ -292,10 +344,21 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             return self._send(400, {"ok": False, "refuse": str(e)})
         try:
-            if path in ("/v1/check", "/v1/translate", "/v1/squeeze") and not paid(self):
+            if path in ("/v1/check", "/v1/translate", "/v1/squeeze") and REQUIRE_PAY:
                 pin = {"/v1/check": PIN_CHECK, "/v1/translate": PIN_BANK, "/v1/squeeze": PIN_PCCX}[path]
                 verb = path.rsplit("/", 1)[-1]
-                return self._send(402, paywall(verb, pin))
+                hdr = payment_header(self)
+                if not hdr:
+                    rec = paywall(verb, pin)
+                    reqs = {"x402Version": rec.get("x402Version") or 1, "accepts": rec.get("accepts") or []}
+                    b64 = __import__("base64").b64encode(json.dumps(reqs).encode()).decode()
+                    return self._send(402, rec, extra={"PAYMENT-REQUIRED": b64, "X-PAYMENT-REQUIRED": b64})
+                st, paid_body = x402_verify(verb, hdr)
+                if st != 200 or not paid_body.get("ok"):
+                    rec = paywall(verb, pin)
+                    rec["detail"] = (paid_body.get("error") or paid_body.get("detail") or "payment not verified")[:300]
+                    return self._send(402, rec)
+                # verified — fall through to the verb
             if path == "/v1/deposit":
                 import base64
 
