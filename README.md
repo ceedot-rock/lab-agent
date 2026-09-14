@@ -22,5 +22,5 @@ POST /v1/translate  { "source": "print(1)", "from": "py", "to": "js" }
 POST /v1/squeeze    { "data_b64": "..." }
 ```
 
-Receipt always has `verb`, `ok`, `source_hash`, `pin`. `retry` is false on refuse. 402 when `LAB_REQUIRE_PAY=1` and no `Payment-Signature`. Deposit: `POST /v1/deposit` `{source_hash, data_b64}` — mismatch is a new object.
+Receipt always has `verb`, `ok`, `source_hash`, `pin`. `retry` is false on refuse. **402** on POST `/v1/check|translate|squeeze` without `Payment-Signature` or `X-PAYMENT`. Health and catalog stay free. Deposit: `POST /v1/deposit`.
 MCP on Rider: `cuni_check`, `bank_paste`, `pccx_encode`.

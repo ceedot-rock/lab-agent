@@ -10,7 +10,7 @@ primary_region = "iad"
   PIN_CHECK = "v0.1.10"
   PIN_BANK = "cuni-bank-0.1.0"
   PIN_PCCX = "e72528b"
-  LAB_REQUIRE_PAY = "0"
+  LAB_REQUIRE_PAY = "1"
 
 [http_service]
   internal_port = 8788
