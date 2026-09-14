@@ -10,13 +10,14 @@ primary_region = "iad"
   PIN_CHECK = "v0.1.10"
   PIN_BANK = "cuni-bank-0.1.0"
   PIN_PCCX = "e72528b"
+  LAB_REQUIRE_PAY = "0"
 
 [http_service]
   internal_port = 8788
   force_https = true
-  auto_stop_machines = "off"
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [[http_service.checks]]
     interval = "30s"

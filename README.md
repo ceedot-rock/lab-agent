@@ -22,5 +22,5 @@ POST /v1/translate  { "source": "print(1)", "from": "py", "to": "js" }
 POST /v1/squeeze    { "data_b64": "..." }
 ```
 
-Receipt always has `verb`, `ok`, `source_hash`, `pin`. Refuse is a string, never a 501 stub.
+Receipt always has `verb`, `ok`, `source_hash`, `pin`. `retry` is false on refuse. 402 when `LAB_REQUIRE_PAY=1` and no `Payment-Signature`. Deposit: `POST /v1/deposit` `{source_hash, data_b64}` — mismatch is a new object.
 MCP on Rider: `cuni_check`, `bank_paste`, `pccx_encode`.

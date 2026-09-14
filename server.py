@@ -23,6 +23,9 @@ PCCX = os.environ.get("PCCX_BIN") or shutil.which("pccx") or "/usr/local/bin/pcc
 PIN_CHECK = os.environ.get("PIN_CHECK", "v0.1.10")
 PIN_BANK = os.environ.get("PIN_BANK", "cuni-bank-0.1.0")
 PIN_PCCX = os.environ.get("PIN_PCCX", "e72528b")
+PAY_URL = os.environ.get("LAB_PAY_URL", "https://www.slidphilabs.com/api/agent")
+REQUIRE_PAY = os.environ.get("LAB_REQUIRE_PAY", "0").strip() in ("1", "true", "yes")
+DEPOSIT_DIR = Path(os.environ.get("LAB_DEPOSIT_DIR", "/tmp/lab-deposits"))
 
 
 def fnv1a64(data: bytes) -> str:
@@ -46,7 +49,88 @@ def receipt(**kw) -> dict:
     for k in ("verb", "ok", "source_hash", "pin"):
         if k not in out:
             raise ValueError(f"receipt missing {k}")
+    # LAB20 #8: refuse is not a retry. Callers set retry=True only on 5xx.
+    out.setdefault("retry", False)
     return out
+
+
+def paid(handler: BaseHTTPRequestHandler) -> bool:
+    if not REQUIRE_PAY:
+        return True
+    sig = handler.headers.get("Payment-Signature") or handler.headers.get("X-PAYMENT") or ""
+    return bool(sig.strip())
+
+
+def paywall(verb: str, pin: str) -> dict:
+    return receipt(
+        verb=verb,
+        ok=False,
+        source_hash="",
+        pin=pin,
+        refuse="payment required",
+        pay=PAY_URL,
+        retry=False,
+    )
+
+
+def deposit_put(source_hash: str, blob: bytes) -> dict:
+    """LAB20 #7/#18: a second copy is only a copy if source_hash matches."""
+    got = sha256(blob)
+    if not source_hash:
+        return receipt(
+            verb="deposit",
+            ok=False,
+            source_hash=got,
+            pin="lab20-7",
+            refuse="replicate without source_hash is a new object",
+            retry=False,
+        )
+    if source_hash.lower() != got:
+        return receipt(
+            verb="deposit",
+            ok=False,
+            source_hash=got,
+            pin="lab20-7",
+            refuse="hash mismatch — this is a new object",
+            retry=False,
+        )
+    DEPOSIT_DIR.mkdir(parents=True, exist_ok=True)
+    dest = DEPOSIT_DIR / got
+    dest.write_bytes(blob)
+    return receipt(
+        verb="deposit",
+        ok=True,
+        source_hash=got,
+        pin="lab20-7",
+        bytes=len(blob),
+        retry=False,
+    )
+
+
+def deposit_get(source_hash: str) -> dict:
+    h = (source_hash or "").lower().strip()
+    path = DEPOSIT_DIR / h if h else None
+    if not h or path is None or not path.is_file():
+        return receipt(
+            verb="deposit",
+            ok=False,
+            source_hash=h,
+            pin="lab20-18",
+            refuse="no deposit for this source_hash",
+            retry=False,
+        )
+    raw = path.read_bytes()
+    import base64
+
+    return receipt(
+        verb="deposit",
+        ok=True,
+        source_hash=h,
+        pin="lab20-18",
+        bytes=len(raw),
+        data_b64=base64.b64encode(raw).decode("ascii"),
+        retry=False,
+    )
 
 
 def do_check(source: str) -> dict:
@@ -170,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Payment-Signature, X-PAYMENT")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
@@ -181,12 +265,18 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "store": "slidphilabs-agent-store",
-                    "verbs": ["check", "translate", "squeeze"],
+                    "verbs": ["check", "translate", "squeeze", "deposit"],
                     "cuni": Path(CUNI).is_file(),
                     "pccx": Path(PCCX).is_file(),
                     "pins": {"check": PIN_CHECK, "translate": PIN_BANK, "squeeze": PIN_PCCX},
+                    "pay_required": REQUIRE_PAY,
+                    "pay": PAY_URL,
                 },
             )
+        if path.startswith("/v1/deposit/"):
+            h = path.rsplit("/", 1)[-1]
+            rec = deposit_get(h)
+            return self._send(200 if rec["ok"] else 404, rec)
         if path in ("/.well-known/ai-products.json", "/ai-products.json"):
             return self._send(200, (ROOT / ".well-known" / "ai-products.json").read_bytes())
         if path in ("/mcp/tools.json", "/tools.json"):
@@ -202,6 +292,27 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             return self._send(400, {"ok": False, "refuse": str(e)})
         try:
+            if path in ("/v1/check", "/v1/translate", "/v1/squeeze") and not paid(self):
+                pin = {"/v1/check": PIN_CHECK, "/v1/translate": PIN_BANK, "/v1/squeeze": PIN_PCCX}[path]
+                verb = path.rsplit("/", 1)[-1]
+                return self._send(402, paywall(verb, pin))
+            if path == "/v1/deposit":
+                import base64
+
+                if data.get("data_b64"):
+                    raw = base64.b64decode(str(data["data_b64"]))
+                elif isinstance(data.get("source"), str):
+                    raw = data["source"].encode("utf-8")
+                else:
+                    return self._send(
+                        400,
+                        receipt(verb="deposit", ok=False, source_hash="", pin="lab20-7", refuse="missing data_b64 or source"),
+                    )
+                rec = deposit_put(str(data.get("source_hash") or ""), raw)
+                return self._send(200 if rec["ok"] else 422, rec)
+            if path == "/v1/replicate":
+                rec = deposit_get(str(data.get("source_hash") or ""))
+                return self._send(200 if rec["ok"] else 404, rec)
             if path == "/v1/check":
                 source = data.get("source")
                 if not isinstance(source, str) or not source.strip():
@@ -232,11 +343,11 @@ class Handler(BaseHTTPRequestHandler):
                 rec = do_squeeze(raw)
                 return self._send(200 if rec["ok"] else 422, rec)
         except subprocess.TimeoutExpired:
-            return self._send(504, {"ok": False, "refuse": f"timeout after {TIMEOUT}s"})
+            return self._send(504, {"ok": False, "refuse": f"timeout after {TIMEOUT}s", "retry": True})
         except FileNotFoundError as e:
-            return self._send(503, {"ok": False, "refuse": str(e)})
+            return self._send(503, {"ok": False, "refuse": str(e), "retry": True})
         except Exception as e:  # noqa: BLE001
-            return self._send(500, {"ok": False, "refuse": str(e)})
+            return self._send(500, {"ok": False, "refuse": str(e), "retry": True})
         return self._send(404, {"ok": False, "refuse": "not found"})
 
 
