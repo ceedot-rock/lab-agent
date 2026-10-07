@@ -1,5 +1,7 @@
 # Lab agent store
 
+[![Audited checks](https://github.com/ceedot-rock/lab-agent/actions/workflows/audited-checks.yml/badge.svg)](https://github.com/ceedot-rock/lab-agent/actions/workflows/audited-checks.yml)
+
 Three verbs. One catalog. Receipt or refuse.
 
 | verb | product | POST |

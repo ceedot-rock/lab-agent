@@ -316,6 +316,16 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
+                    "service": "slidphilabs-agent-store",
+                    "about": "Slid Phi Labs agent store — check / translate / squeeze. Receipt or refuse.",
+                    "endpoints": {
+                        "health": ["/", "/health", "/healthz"],
+                        "verbs": ["/v1/check", "/v1/translate", "/v1/squeeze"],
+                        "deposit": "/v1/deposit",
+                        "catalog": "/.well-known/ai-products.json",
+                        "tools": "/mcp/tools.json",
+                        "receipt_schema": "/receipt.schema.json",
+                    },
                     "store": "slidphilabs-agent-store",
                     "verbs": ["check", "translate", "squeeze", "deposit"],
                     "cuni": Path(CUNI).is_file(),
